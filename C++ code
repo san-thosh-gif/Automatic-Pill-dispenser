@@ -1,0 +1,138 @@
+#include <DS1302.h>
+#include <Servo.h>
+#include <LiquidCrystal.h>
+
+// Define DS1302 RTC pins
+#define RST 10  // Reset pin
+#define DAT 9   // Data pin
+#define CLK 8   // Clock pin
+
+// Initialize RTC, Servo, and LCD
+DS1302 rtc(RST, DAT, CLK);
+Servo servo;
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+// Pin assignments
+const int servoPin = 6;
+const int buzzerPin = 7;
+const int ledPin = 8;
+const int buttonPin = 9;
+
+// Other variables
+int currentAngle = 0;  // Track servo position
+const int stepAngle = 45;  // Move servo by 45 degrees each time
+bool moveBackward = false; // Track return movement
+unsigned long lastDispenseTime = 0;
+const unsigned long dispenseInterval = 60000; // 1 minute in milliseconds
+
+void setup() {
+    pinMode(buzzerPin, OUTPUT);
+    pinMode(ledPin, OUTPUT);
+    pinMode(buttonPin, INPUT_PULLUP);
+    servo.attach(servoPin);
+    servo.write(0);  // Start position
+    lcd.begin(16, 2);
+    Serial.begin(9600);
+    
+    rtc.halt(false);
+    rtc.writeProtect(false);
+    
+    // Uncomment these lines to set RTC time once, then comment them out again
+    // rtc.setDOW(SATURDAY);       // Set Day-of-Week
+    // rtc.setTime(12, 0, 0);      // Set Time (HH, MM, SS)
+    // rtc.setDate(2, 3, 2025);    // Set Date (DD, MM, YYYY)
+}
+
+void loop() {
+    Time now = rtc.time();  // Get current time
+    updateLCD(now);
+
+    // Check if it's time to dispense
+    if (millis() - lastDispenseTime >= dispenseInterval) {
+        lastDispenseTime = millis();
+        dispensePill();
+    }
+
+    delay(500); // Reduce CPU load
+}
+
+void updateLCD(Time now) {
+    lcd.setCursor(0, 0);
+    lcd.print("Time: ");
+    if (now.hr < 10) lcd.print("0");
+    lcd.print(now.hr);
+    lcd.print(":");
+    if (now.min < 10) lcd.print("0");
+    lcd.print(now.min);
+    lcd.print(":");
+    if (now.sec < 10) lcd.print("0");
+    lcd.print(now.sec);
+}
+
+void dispensePill() {
+    Serial.println("Dispensing Pill...");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Dispensing...");
+
+    if (!moveBackward) { 
+        // Move servo in 45-degree steps
+        currentAngle += stepAngle;
+        if (currentAngle > 180) {  
+            currentAngle = 180;  // Stop at 180°
+        }
+        
+        servo.write(currentAngle);
+        delay(1000);  // Wait for servo to move
+
+        // ✅ Turn on Buzzer & LED immediately after each 45° step
+        activateAlert();
+        
+        // Wait for button press before moving again
+        waitForButtonPress();
+
+        // If we reached 180°, start moving backward
+        if (currentAngle == 180) {
+            moveBackward = true;
+        }
+    } else {
+        returnServoToZero();
+    }
+}
+
+// Function to turn ON buzzer & LED
+void activateAlert() {
+    digitalWrite(buzzerPin, HIGH);
+    digitalWrite(ledPin, HIGH);
+    lcd.setCursor(0, 1);
+    lcd.print("TAKE THE PILL");
+}
+
+// Function to wait for button press
+void waitForButtonPress() {
+    while (digitalRead(buttonPin) == HIGH) {
+        delay(50);  // Wait until button is pressed
+    }
+    delay(200); // Debounce
+    digitalWrite(buzzerPin, LOW);
+    digitalWrite(ledPin, LOW);
+    lcd.clear();
+}
+
+// Function to return the servo to 0° in reverse
+void returnServoToZero() {
+    while (currentAngle > 0) {
+        currentAngle -= stepAngle;
+        if (currentAngle < 0) currentAngle = 0;
+        
+        servo.write(currentAngle);
+        delay(1000); // Wait for servo to move
+
+        // ✅ Turn on Buzzer & LED after each step back
+        activateAlert();
+        
+        // Wait for button press before moving again
+        waitForButtonPress();
+    }
+    moveBackward = false; // Reset flag so it moves forward again
+}
